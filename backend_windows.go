@@ -4,6 +4,7 @@ package spectacle
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -28,6 +29,15 @@ type backend struct {
 	// without ICoreWebView2Environment10.
 	env          *webview2.Environment
 	fallbackEnvs map[string]*webview2.Environment
+
+	// Composition (visual) hosting is the default: webviews render into
+	// DirectComposition visuals with app-routed input, which is what
+	// lets overlays stack and be click-through. windowed flips to the
+	// legacy child-HWND path when the runtime can't do composition
+	// (pre-Environment10); overlays are unsupported there.
+	dcomp    *webview2.CompositionDevice
+	windowed bool
+	probed   bool
 
 	mu    sync.Mutex
 	queue []func()
@@ -98,12 +108,13 @@ func (b *backend) NewWebView(pw Window, profile string, options ...WebViewOption
 	for _, opt := range options {
 		opt(&cfg)
 	}
+	if b.SupportsOverlay() {
+		return b.newCompositionWebView(w, profile, cfg)
+	}
 	if cfg.overlay {
 		// Windowed WebView2 controllers own their input HWNDs: a
 		// transparent layer would still swallow every click under it.
-		// Overlays need composition (visual) hosting, which this
-		// backend doesn't do yet.
-		return nil, fmt.Errorf("win: overlay webviews are not supported yet")
+		return nil, fmt.Errorf("win: overlay webviews need composition hosting, which this runtime lacks")
 	}
 	ctrl, err := b.controllerFor(w.hwnd, profile)
 	if err != nil {
@@ -112,19 +123,103 @@ func (b *backend) NewWebView(pw Window, profile string, options ...WebViewOption
 	return newWebView(w, ctrl, b.debug)
 }
 
-// SupportsOverlay: not until the backend moves to composition hosting.
-func (b *backend) SupportsOverlay() bool { return false }
+// SupportsOverlay probes (once) whether composition hosting is
+// available: an Environment10 runtime plus a DirectComposition device.
+func (b *backend) SupportsOverlay() bool {
+	if b.probed {
+		return !b.windowed
+	}
+	b.probed = true
+	b.windowed = true
+	if err := b.ensureEnv(); err != nil {
+		return false
+	}
+	if !b.env.SupportsProfiles() { // Environment10 carries composition too
+		return false
+	}
+	dev, err := webview2.NewCompositionDevice()
+	if err != nil {
+		return false
+	}
+	b.dcomp = dev
+	b.windowed = false
+	return true
+}
 
-// controllerFor isolates the profile strategy: one shared environment
-// with named profiles on current runtimes, one environment (and user
-// data folder) per profile on runtimes too old for Environment10.
-func (b *backend) controllerFor(hwnd uintptr, profile string) (*webview2.Controller, error) {
-	if b.env == nil {
-		env, err := webview2.NewEnvironment(b.userDataFolder)
-		if err != nil {
-			return nil, err
+func (b *backend) ensureEnv() error {
+	if b.env != nil {
+		return nil
+	}
+	env, err := webview2.NewEnvironment(b.userDataFolder)
+	if err != nil {
+		return err
+	}
+	b.env = env
+	return nil
+}
+
+// newCompositionWebView creates a visual-hosted webview: a composition
+// controller rendering into a fresh visual under the window's root.
+func (b *backend) newCompositionWebView(w *window, profile string, cfg webViewConfig) (WebView, error) {
+	if err := w.ensureComposition(b.dcomp); err != nil {
+		return nil, err
+	}
+	comp, err := b.env.CreateCompositionController(w.hwnd, profile)
+	if err != nil {
+		return nil, err
+	}
+	ctrl, err := comp.Controller()
+	if err != nil {
+		comp.Release()
+		return nil, err
+	}
+	visual, err := b.dcomp.CreateVisual()
+	if err != nil {
+		ctrl.Close()
+		comp.Release()
+		return nil, err
+	}
+	if err := comp.SetRootVisualTarget(visual); err != nil {
+		visual.Release()
+		ctrl.Close()
+		comp.Release()
+		return nil, err
+	}
+	v, err := newWebView(w, ctrl, b.debug)
+	if err != nil {
+		visual.Release()
+		ctrl.Close()
+		comp.Release()
+		return nil, err
+	}
+	v.comp, v.visual, v.overlay = comp, visual, cfg.overlay
+	if cfg.overlay {
+		if err := ctrl.SetTransparentBackground(); err != nil {
+			log.Printf("win: %v", err)
 		}
-		b.env = env
+	}
+	if err := comp.OnCursorChanged(func() {
+		v.cursor = comp.Cursor()
+		if w.mouseIn == v {
+			w32.SetCursor.Call(v.cursor)
+		}
+	}); err != nil {
+		log.Printf("win: %v", err)
+	}
+	w.attachView(v)
+	if err := b.dcomp.Commit(); err != nil {
+		log.Printf("win: %v", err)
+	}
+	return v, nil
+}
+
+// controllerFor isolates the windowed-fallback profile strategy: one
+// shared environment with named profiles on current runtimes, one
+// environment (and user data folder) per profile on runtimes too old
+// for Environment10.
+func (b *backend) controllerFor(hwnd uintptr, profile string) (*webview2.Controller, error) {
+	if err := b.ensureEnv(); err != nil {
+		return nil, err
 	}
 	if profile == "" {
 		return b.env.CreateController(hwnd)

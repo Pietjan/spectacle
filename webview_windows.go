@@ -13,9 +13,19 @@ import (
 // WebView adapts a WebView2 controller pair to WebView.
 type webView struct {
 	id     int
+	win    *window
 	ctrl   *webview2.Controller
 	core   *webview2.CoreWebView2
 	closed bool
+
+	// Composition hosting (nil comp/visual on the windowed fallback).
+	comp    *webview2.CompositionController
+	visual  *webview2.Visual
+	overlay bool
+	bounds  Rect
+	regions []Rect
+	visible bool
+	cursor  uintptr
 }
 
 var webViewCount int
@@ -26,7 +36,9 @@ func newWebView(w *window, ctrl *webview2.Controller, debug bool) (*webView, err
 		return nil, err
 	}
 	webViewCount++
-	v := &webView{id: webViewCount, ctrl: ctrl, core: core}
+	v := &webView{id: webViewCount, win: w, ctrl: ctrl, core: core, visible: true}
+	cursor, _, _ := w32.LoadCursor.Call(0, uintptr(w32.IdcArrow))
+	v.cursor = cursor
 	// Controllers do not reliably start visible; make "new webview is
 	// visible" the platform contract and let the app hide what it hides.
 	if err := ctrl.SetVisible(true); err != nil {
@@ -170,6 +182,7 @@ func (v *webView) SetBounds(r Rect) {
 	if v.closed {
 		return
 	}
+	v.bounds = r
 	err := v.ctrl.SetBounds(w32.Rect{
 		Left:   int32(r.X),
 		Top:    int32(r.Y),
@@ -179,12 +192,23 @@ func (v *webView) SetBounds(r Rect) {
 	if err != nil {
 		log.Printf("win: %v", err)
 	}
+	if v.comp != nil {
+		// Visual hosting renders at the visual's origin regardless of
+		// the bounds' left/top; position comes from the visual.
+		if err := v.visual.SetTranslation(int32(r.X), int32(r.Y)); err != nil {
+			log.Printf("win: %v", err)
+		}
+		if v.win.backend.dcomp != nil {
+			v.win.backend.dcomp.Commit()
+		}
+	}
 }
 
 func (v *webView) SetVisible(visible bool) {
 	if v.closed {
 		return
 	}
+	v.visible = visible
 	if err := v.ctrl.SetVisible(visible); err != nil {
 		log.Printf("win: %v", err)
 	}
@@ -199,9 +223,31 @@ func (v *webView) Focus() {
 	}
 }
 
-// SetInputRegions is a no-op until this backend supports overlays
-// (per contract: best-effort).
-func (v *webView) SetInputRegions([]Rect) {}
+// SetInputRegions limits pointer input to regions (window client
+// coordinates); the window's mouse router consults them on every hit
+// test. No-op on the windowed fallback (per contract: best-effort).
+func (v *webView) SetInputRegions(regions []Rect) {
+	if v.closed || v.comp == nil {
+		return
+	}
+	if regions == nil {
+		v.regions = nil
+		return
+	}
+	v.regions = append([]Rect(nil), regions...)
+	// The pointer may be sitting inside a region that just changed;
+	// resync enter/leave on the next real mouse event (cheap and lazy).
+}
+
+// sendMouse forwards one mouse event to a composition-hosted view.
+func (v *webView) sendMouse(kind, keys, data uint32, x, y int32) {
+	if v.closed || v.comp == nil {
+		return
+	}
+	if err := v.comp.SendMouseInput(kind, keys, data, x, y); err != nil {
+		log.Printf("win: %v", err)
+	}
+}
 
 func (v *webView) DeleteProfile() {
 	if v.closed {
@@ -217,5 +263,12 @@ func (v *webView) Close() {
 		return
 	}
 	v.closed = true
+	if v.comp != nil {
+		v.win.detachView(v)
+	}
 	v.ctrl.Close()
+	if v.comp != nil {
+		v.comp.Release()
+		v.visual.Release()
+	}
 }

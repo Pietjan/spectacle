@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/pietjan/spectacle/internal/w32"
+	"github.com/pietjan/spectacle/internal/webview2"
 )
 
 const (
@@ -28,7 +29,94 @@ type window struct {
 	onClose  func() bool
 	onMove   []func()
 
+	// Composition hosting: the visual tree root and the mouse router's
+	// state. views is z-ordered bottom→top (overlays kept above normal
+	// views); the window proc hit-tests it and forwards mouse input.
+	target   *webview2.CompositionTarget
+	root     *webview2.Visual
+	views    []*webView
+	mouseIn  *webView // view under the pointer (enter/leave tracking)
+	captured *webView // view holding the implicit drag capture
+	focused  *webView
+	tracking bool // TrackMouseEvent armed
+
 	tray *tray
+}
+
+// ensureComposition lazily builds the window's composition target and
+// root visual.
+func (w *window) ensureComposition(dev *webview2.CompositionDevice) error {
+	if w.root != nil {
+		return nil
+	}
+	target, err := dev.CreateTargetForHwnd(w.hwnd)
+	if err != nil {
+		return err
+	}
+	root, err := dev.CreateVisual()
+	if err != nil {
+		return err
+	}
+	if err := target.SetRoot(root); err != nil {
+		return err
+	}
+	w.target, w.root = target, root
+	return nil
+}
+
+// attachView inserts v into the z-order and the visual tree: overlays
+// go on top, normal views above other normal views but below overlays.
+func (w *window) attachView(v *webView) {
+	insert := len(w.views)
+	if !v.overlay {
+		for i, other := range w.views {
+			if other.overlay {
+				insert = i
+				break
+			}
+		}
+	}
+	w.views = append(w.views, nil)
+	copy(w.views[insert+1:], w.views[insert:])
+	w.views[insert] = v
+	w.restackVisuals()
+}
+
+// restackVisuals rebuilds the root's children to match w.views order.
+// View counts are small; correctness beats cleverness here.
+func (w *window) restackVisuals() {
+	for _, v := range w.views {
+		w.root.RemoveVisual(v.visual)
+	}
+	for _, v := range w.views {
+		w.root.AddVisual(v.visual) // appends topmost
+	}
+}
+
+// detachView removes a closing view from the router and visual tree.
+func (w *window) detachView(v *webView) {
+	for i, x := range w.views {
+		if x == v {
+			w.views = append(w.views[:i], w.views[i+1:]...)
+			break
+		}
+	}
+	if w.mouseIn == v {
+		w.mouseIn = nil
+	}
+	if w.captured == v {
+		w.captured = nil
+		w32.ReleaseCapture.Call()
+	}
+	if w.focused == v {
+		w.focused = nil
+	}
+	if w.root != nil {
+		w.root.RemoveVisual(v.visual)
+		if w.backend.dcomp != nil {
+			w.backend.dcomp.Commit()
+		}
+	}
 }
 
 // windows maps hwnd → Window for the shared wndproc. Single-threaded
@@ -92,9 +180,131 @@ func (w *window) wndProc(msg, wparam uintptr, lparam unsafe.Pointer) uintptr {
 			w.tray.onEvent(w32.Loword(uintptr(lparam)))
 		}
 		return 0
+	case w32.WmSetCursor:
+		if w.mouseIn != nil && w32.Loword(uintptr(lparam)) == w32.HtClient {
+			w32.SetCursor.Call(w.mouseIn.cursor)
+			return 1
+		}
+	case w32.WmMouseLeave:
+		w.tracking = false
+		if w.mouseIn != nil && w.captured == nil {
+			w.mouseIn.sendMouse(w32.WmMouseLeave, 0, 0, 0, 0)
+			w.mouseIn = nil
+		}
+		return 0
+	case w32.WmSetFocus:
+		if w.focused != nil && !w.focused.closed {
+			w.focused.ctrl.MoveFocus()
+		}
+	default:
+		if msg >= w32.WmMouseMove && msg <= w32.WmMouseHWheel {
+			if w.routeMouse(msg, wparam, uintptr(lparam)) {
+				return 0
+			}
+		}
 	}
 	r, _, _ := w32.DefWindowProc.Call(w.hwnd, msg, wparam, uintptr(lparam))
 	return r
+}
+
+// routeMouse forwards a mouse message to the composition-hosted view
+// under the pointer (or the one holding the drag capture). Reports
+// whether the message was consumed.
+func (w *window) routeMouse(msg, wparam, lparam uintptr) bool {
+	if len(w.views) == 0 {
+		return false
+	}
+	x := int32(int16(w32.Loword(lparam)))
+	y := int32(int16(w32.Hiword(lparam)))
+	if msg == w32.WmMouseWheel || msg == w32.WmMouseHWheel {
+		// Wheel messages carry screen coordinates.
+		pt := w32.Point{X: x, Y: y}
+		w32.ScreenToClient.Call(w.hwnd, uintptr(unsafe.Pointer(&pt)))
+		x, y = pt.X, pt.Y
+	}
+
+	target := w.captured
+	if target == nil {
+		target = w.hitTest(x, y)
+	}
+	// Crossing bookkeeping: tell the old view the pointer left it.
+	if w.captured == nil && target != w.mouseIn {
+		if w.mouseIn != nil {
+			w.mouseIn.sendMouse(w32.WmMouseLeave, 0, 0, 0, 0)
+		}
+		w.mouseIn = target
+	}
+	if !w.tracking {
+		// Ask for one WM_MOUSELEAVE when the pointer exits the window.
+		tme := w32.TrackMouseEventData{DwFlags: w32.TmeLeave, HwndTrack: w.hwnd}
+		tme.CbSize = uint32(unsafe.Sizeof(tme))
+		w32.TrackMouseEvent.Call(uintptr(unsafe.Pointer(&tme)))
+		w.tracking = true
+	}
+	if target == nil {
+		return false
+	}
+
+	keys := uint32(w32.Loword(wparam))
+	var data uint32
+	switch msg {
+	case w32.WmMouseWheel, w32.WmMouseHWheel:
+		data = uint32(int32(int16(w32.Hiword(wparam)))) // signed wheel delta
+	case w32.WmXButtonDown, w32.WmXButtonUp, w32.WmXButtonDblClk:
+		data = uint32(w32.Hiword(wparam))
+	}
+
+	switch msg {
+	case w32.WmLButtonDown, w32.WmRButtonDown, w32.WmMButtonDown, w32.WmXButtonDown:
+		if w.captured == nil {
+			w32.SetCapture.Call(w.hwnd)
+			w.captured = target
+		}
+		if w.focused != target {
+			w.focused = target
+			target.ctrl.MoveFocus()
+		}
+	case w32.WmLButtonUp, w32.WmRButtonUp, w32.WmMButtonUp, w32.WmXButtonUp:
+		const anyButton = 0x1 | 0x2 | 0x10 | 0x20 | 0x40 // MK_LBUTTON..MK_XBUTTON2
+		if w.captured != nil && keys&anyButton == 0 {
+			w.captured = nil
+			w32.ReleaseCapture.Call()
+		}
+	}
+
+	target.sendMouse(uint32(msg), keys, data,
+		x-int32(target.bounds.X), y-int32(target.bounds.Y))
+	return true
+}
+
+// hitTest finds the topmost visible view whose bounds (and input
+// regions, when set) contain the window-client point.
+func (w *window) hitTest(x, y int32) *webView {
+	px, py := int(x), int(y)
+	for i := len(w.views) - 1; i >= 0; i-- {
+		v := w.views[i]
+		if v.closed || !v.visible {
+			continue
+		}
+		b := v.bounds
+		if px < b.X || px >= b.X+b.W || py < b.Y || py >= b.Y+b.H {
+			continue
+		}
+		if v.regions != nil && !regionsContain(v.regions, px, py) {
+			continue
+		}
+		return v
+	}
+	return nil
+}
+
+func regionsContain(regions []Rect, x, y int) bool {
+	for _, r := range regions {
+		if x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *window) notifyResize() {

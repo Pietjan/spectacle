@@ -65,6 +65,16 @@ type controller2Vtbl struct {
 // SetDefaultBackgroundColor paints the webview's backdrop — what shows
 // before a page paints — instead of the default white.
 func (c *Controller) SetDefaultBackgroundColor(r, g, b byte) error {
+	return c.setBackground(0xff, r, g, b)
+}
+
+// SetTransparentBackground makes unpainted page area transparent, so
+// the views beneath show through (WebView2 only honors alpha 0 or 255).
+func (c *Controller) SetTransparentBackground() error {
+	return c.setBackground(0, 0, 0, 0)
+}
+
+func (c *Controller) setBackground(a, r, g, b byte) error {
 	p, err := queryInterface(unsafe.Pointer(c), &iidController2)
 	if err != nil {
 		return err
@@ -72,7 +82,7 @@ func (c *Controller) SetDefaultBackgroundColor(r, g, b byte) error {
 	defer release(p)
 	c2 := (*controller2)(p)
 	// COREWEBVIEW2_COLOR {A,R,G,B} is 4 bytes, passed by value.
-	color := uintptr(0xff) | uintptr(r)<<8 | uintptr(g)<<16 | uintptr(b)<<24
+	color := uintptr(a) | uintptr(r)<<8 | uintptr(g)<<16 | uintptr(b)<<24
 	return checkHR("put_DefaultBackgroundColor", call(c2.vtbl.PutDefaultBackgroundColor, p, color))
 }
 

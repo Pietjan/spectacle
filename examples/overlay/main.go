@@ -46,6 +46,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	content.OnMessage(func(raw string) { log.Printf("content message: %s", raw) })
 	content.NavigateHTML(contentHTML)
 	overlay, err := b.NewWebView(win, "", spectacle.Overlay())
 	if err != nil {
@@ -118,6 +119,13 @@ const contentHTML = `<!doctype html><html><head><style>
       }
     });
     addEventListener('click',e=>console.log('content: click '+e.clientX+','+e.clientY));
+    // Console output is invisible on Windows; mirror events over the bridge.
+    const say=m=>window.chrome?.webview?.postMessage({log:m});
+    addEventListener('mousedown',e=>say('down '+e.button+' '+e.clientX+','+e.clientY));
+    addEventListener('mouseup',e=>say('up '+e.button+' '+e.clientX+','+e.clientY));
+    addEventListener('click',e=>say('click '+e.clientX+','+e.clientY));
+    addEventListener('keydown',e=>say('key '+e.key));
+    addEventListener('wheel',e=>say('wheel '+e.deltaY));
   </script>
 </body></html>`
 

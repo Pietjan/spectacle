@@ -16,6 +16,7 @@ var (
 	ole32    = windows.NewLazySystemDLL("ole32.dll")
 	gdi32    = windows.NewLazySystemDLL("gdi32.dll")
 	dwmapi   = windows.NewLazySystemDLL("dwmapi.dll")
+	dcomp    = windows.NewLazySystemDLL("dcomp.dll")
 
 	RegisterClassEx           = user32.NewProc("RegisterClassExW")
 	CreateWindowEx            = user32.NewProc("CreateWindowExW")
@@ -54,6 +55,16 @@ var (
 	CreateIconIndirect        = user32.NewProc("CreateIconIndirect")
 	DestroyIcon               = user32.NewProc("DestroyIcon")
 	DwmSetWindowAttribute     = dwmapi.NewProc("DwmSetWindowAttribute")
+
+	// Composition hosting: DirectComposition device creation plus the
+	// input plumbing the app-forwarded mouse routing needs.
+	DCompositionCreateDevice2 = dcomp.NewProc("DCompositionCreateDevice2")
+	SetCapture                = user32.NewProc("SetCapture")
+	ReleaseCapture            = user32.NewProc("ReleaseCapture")
+	SetCursor                 = user32.NewProc("SetCursor")
+	ScreenToClient            = user32.NewProc("ScreenToClient")
+	TrackMouseEvent           = user32.NewProc("TrackMouseEvent")
+	SetFocus                  = user32.NewProc("SetFocus")
 )
 
 const (
@@ -72,9 +83,31 @@ const (
 	WmSetFocus   = 0x0007
 	WmCommand    = 0x0111
 	WmDpiChanged = 0x02E0
-	WmLButtonUp  = 0x0202
-	WmRButtonUp  = 0x0205
 	WmApp        = 0x8000
+
+	// Mouse messages forwarded to composition-hosted webviews. The
+	// COREWEBVIEW2_MOUSE_EVENT_KIND values are these same message codes.
+	WmMouseMove     = 0x0200
+	WmLButtonDown   = 0x0201
+	WmLButtonUp     = 0x0202
+	WmLButtonDblClk = 0x0203
+	WmRButtonDown   = 0x0204
+	WmRButtonUp     = 0x0205
+	WmRButtonDblClk = 0x0206
+	WmMButtonDown   = 0x0207
+	WmMButtonUp     = 0x0208
+	WmMButtonDblClk = 0x0209
+	WmMouseWheel    = 0x020A
+	WmXButtonDown   = 0x020B
+	WmXButtonUp     = 0x020C
+	WmXButtonDblClk = 0x020D
+	WmMouseHWheel   = 0x020E
+	WmMouseLeave    = 0x02A3
+	WmSetCursor     = 0x0020
+
+	HtClient = 1
+
+	TmeLeave = 0x0002
 
 	// Balloon-notification events (tray callback, version 4).
 	NinBalloonUserClick = 0x0405
@@ -178,6 +211,14 @@ type NotifyIconData struct {
 	DwInfoFlags      uint32
 	GuidItem         windows.GUID
 	HBalloonIcon     uintptr
+}
+
+// TrackMouseEventData is the Win32 TRACKMOUSEEVENT.
+type TrackMouseEventData struct {
+	CbSize      uint32
+	DwFlags     uint32
+	HwndTrack   uintptr
+	DwHoverTime uint32
 }
 
 // IconInfo is the Win32 ICONINFO.
