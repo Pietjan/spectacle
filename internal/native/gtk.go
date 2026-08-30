@@ -23,6 +23,12 @@ var (
 	GtkWidgetGetHeight      func(w uintptr) int32
 	GtkWidgetRealize        func(w uintptr)
 	GtkWidgetGetNative      func(w uintptr) uintptr
+	GtkWidgetSetCanTarget   func(w uintptr, canTarget int32)
+	GtkWidgetInsertBefore   func(w, parent, nextSibling uintptr)
+	GtkWidgetAddController  func(w, controller uintptr)
+	// Deprecated in GTK 4.12 but kept exported; the graphene-based
+	// replacement needs by-value struct marshalling purego can't do.
+	GtkWidgetTranslateCoordinates func(src, dest uintptr, srcX, srcY float64, destX, destY *float64) int32
 
 	GtkHeaderBarNew      func() uintptr
 	GtkWindowSetTitlebar func(win, titlebar uintptr)
@@ -32,7 +38,12 @@ var (
 	GtkFixedMove   func(fixed, child uintptr, x, y float64)
 	GtkFixedRemove func(fixed, child uintptr)
 
-	GtkNativeGetSurface func(native uintptr) uintptr
+	GtkNativeGetSurface          func(native uintptr) uintptr
+	GtkNativeGetSurfaceTransform func(native uintptr, x, y *float64)
+
+	GtkEventControllerLegacyNew           func() uintptr
+	GtkEventControllerSetPropagationPhase func(controller uintptr, phase int32)
+	GdkEventGetPosition                   func(event uintptr, x, y *float64) int32
 
 	GtkSettingsGetDefault func() uintptr
 
@@ -64,6 +75,14 @@ var gtkFuncs = []registration{
 	{&GtkWidgetGetHeight, "gtk_widget_get_height"},
 	{&GtkWidgetRealize, "gtk_widget_realize"},
 	{&GtkWidgetGetNative, "gtk_widget_get_native"},
+	{&GtkWidgetSetCanTarget, "gtk_widget_set_can_target"},
+	{&GtkWidgetInsertBefore, "gtk_widget_insert_before"},
+	{&GtkWidgetAddController, "gtk_widget_add_controller"},
+	{&GtkWidgetTranslateCoordinates, "gtk_widget_translate_coordinates"},
+	{&GtkNativeGetSurfaceTransform, "gtk_native_get_surface_transform"},
+	{&GtkEventControllerLegacyNew, "gtk_event_controller_legacy_new"},
+	{&GtkEventControllerSetPropagationPhase, "gtk_event_controller_set_propagation_phase"},
+	{&GdkEventGetPosition, "gdk_event_get_position"},
 	{&GtkHeaderBarNew, "gtk_header_bar_new"},
 	{&GtkWindowSetTitlebar, "gtk_window_set_titlebar"},
 	{&GtkFixedNew, "gtk_fixed_new"},
@@ -81,3 +100,7 @@ var gtkFuncs = []registration{
 
 // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION.
 const StyleProviderPriorityApplication = 600
+
+// GTK_PHASE_CAPTURE: event controllers run root-to-target, before the
+// target's own handlers.
+const PhaseCapture = 1

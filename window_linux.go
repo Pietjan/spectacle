@@ -18,6 +18,14 @@ type window struct {
 	lastW, lastH, lastScale int
 	resizePending           bool
 
+	// Input-region support: overlays stay stacked above normal views,
+	// and views with input regions get can-target toggled from pointer
+	// tracking (see pointerMoved).
+	overlays    []*webView
+	regionViews []*webView
+	ptrX, ptrY  float64 // last pointer position, client-area logical px
+	ptrKnown    bool
+
 	tray *tray
 }
 
@@ -68,7 +76,86 @@ func newWindow(b *backend, title string, bounds Rect) (*window, error) {
 			return 0
 		})
 	}
+	// Pointer tracking for SetInputRegions. GTK4 picks the event target
+	// per widget, all-or-nothing (can-target), so region-limited views
+	// get their can-target flipped from the pointer position instead.
+	// A capture-phase controller on the window sees every pointer event
+	// before picking routes the NEXT one — and a press is always
+	// preceded by the motion that brought the pointer there, so the flag
+	// is correct by the time clicks arrive.
+	ptr := native.GtkEventControllerLegacyNew()
+	native.GtkEventControllerSetPropagationPhase(ptr, native.PhaseCapture)
+	native.Connect(ptr, "event", 1, func(args []uintptr) uintptr {
+		var x, y float64
+		if native.GdkEventGetPosition(args[1], &x, &y) != 0 {
+			w.pointerMoved(x, y)
+		}
+		return 0 // always propagate
+	})
+	native.GtkWidgetAddController(w.win, ptr)
 	return w, nil
+}
+
+// pointerMoved converts a pointer position from surface coordinates to
+// client-area (GtkFixed) coordinates and re-evaluates input regions.
+func (w *window) pointerMoved(sx, sy float64) {
+	if len(w.regionViews) == 0 {
+		w.ptrKnown = false
+		return
+	}
+	// Surface coords include the CSD shadow margin; the transform is
+	// that margin (GTK itself subtracts it in event handling).
+	var tx, ty float64
+	native.GtkNativeGetSurfaceTransform(native.GtkWidgetGetNative(w.win), &tx, &ty)
+	var fx, fy float64
+	if native.GtkWidgetTranslateCoordinates(w.win, w.fixed, sx-tx, sy-ty, &fx, &fy) == 0 {
+		return
+	}
+	w.ptrX, w.ptrY, w.ptrKnown = fx, fy, true
+	w.retarget()
+}
+
+// retarget applies each region-limited view's can-target for the current
+// pointer position. Regions are physical px in client-area coordinates.
+func (w *window) retarget() {
+	scale := float64(max(int(native.GtkWidgetGetScaleFactor(w.win)), 1))
+	px, py := int(w.ptrX*scale), int(w.ptrY*scale)
+	for _, v := range w.regionViews {
+		hit := false
+		if w.ptrKnown {
+			for _, r := range v.regions {
+				if px >= r.X && px < r.X+r.W && py >= r.Y && py < r.Y+r.H {
+					hit = true
+					break
+				}
+			}
+		}
+		v.setCanTarget(hit)
+	}
+}
+
+// restack keeps overlay views above everything else; called after any
+// view is added to the fixed. GtkFixed renders children in sibling
+// order and picks topmost-first.
+func (w *window) restack() {
+	for _, v := range w.overlays {
+		native.GtkWidgetInsertBefore(v.view, w.fixed, 0)
+	}
+}
+
+// dropView forgets a closing view from the stacking and region lists.
+func (w *window) dropView(v *webView) {
+	w.overlays = remove(w.overlays, v)
+	w.regionViews = remove(w.regionViews, v)
+}
+
+func remove(s []*webView, v *webView) []*webView {
+	for i, x := range s {
+		if x == v {
+			return append(s[:i], s[i+1:]...)
+		}
+	}
+	return s
 }
 
 func (w *window) scheduleResizeCheck() {

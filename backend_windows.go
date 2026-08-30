@@ -89,10 +89,21 @@ func (b *backend) NewWindow(title string, bounds Rect) (Window, error) {
 }
 
 // NewWebView creates a webview on w in the given profile.
-func (b *backend) NewWebView(pw Window, profile string) (WebView, error) {
+func (b *backend) NewWebView(pw Window, profile string, options ...WebViewOption) (WebView, error) {
 	w, ok := pw.(*window)
 	if !ok {
 		return nil, fmt.Errorf("win: foreign window %T", pw)
+	}
+	var cfg webViewConfig
+	for _, opt := range options {
+		opt(&cfg)
+	}
+	if cfg.overlay {
+		// Windowed WebView2 controllers own their input HWNDs: a
+		// transparent layer would still swallow every click under it.
+		// Overlays need composition (visual) hosting, which this
+		// backend doesn't do yet.
+		return nil, fmt.Errorf("win: overlay webviews are not supported yet")
 	}
 	ctrl, err := b.controllerFor(w.hwnd, profile)
 	if err != nil {
@@ -100,6 +111,9 @@ func (b *backend) NewWebView(pw Window, profile string) (WebView, error) {
 	}
 	return newWebView(w, ctrl, b.debug)
 }
+
+// SupportsOverlay: not until the backend moves to composition hosting.
+func (b *backend) SupportsOverlay() bool { return false }
 
 // controllerFor isolates the profile strategy: one shared environment
 // with named profiles on current runtimes, one environment (and user

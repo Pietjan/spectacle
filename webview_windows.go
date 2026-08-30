@@ -199,6 +199,10 @@ func (v *webView) Focus() {
 	}
 }
 
+// SetInputRegions is a no-op until this backend supports overlays
+// (per contract: best-effort).
+func (v *webView) SetInputRegions([]Rect) {}
+
 func (v *webView) DeleteProfile() {
 	if v.closed {
 		return

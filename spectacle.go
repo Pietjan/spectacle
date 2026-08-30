@@ -23,6 +23,25 @@ type MenuItem struct {
 	OnClick func()
 }
 
+// webViewConfig collects NewWebView options.
+type webViewConfig struct {
+	overlay bool
+}
+
+// WebViewOption configures a webview at creation.
+type WebViewOption func(*webViewConfig)
+
+// Overlay creates the webview as a transparent overlay: it stacks above
+// every non-overlay webview in the window regardless of creation order,
+// and its background is transparent, so the page decides which pixels
+// exist (an unstyled body shows the views underneath). Overlays receive
+// pointer input over their whole surface until SetInputRegions narrows
+// that down. Check SupportsOverlay first: on backends without overlay
+// support, NewWebView rejects the option.
+func Overlay() WebViewOption {
+	return func(c *webViewConfig) { c.overlay = true }
+}
+
 // Backend owns the UI thread, the native event loop, and webview creation.
 //
 // Every method except Dispatch must be called on the UI thread: either
@@ -34,7 +53,10 @@ type Backend interface {
 	// NewWebView creates a webview as a child of w. profile selects an
 	// isolated browsing session; webviews sharing a profile share cookies
 	// and storage. The empty profile is the default session.
-	NewWebView(w Window, profile string) (WebView, error)
+	NewWebView(w Window, profile string, options ...WebViewOption) (WebView, error)
+	// SupportsOverlay reports whether this backend can create Overlay
+	// webviews (transparent, stacked, input-region-aware).
+	SupportsOverlay() bool
 	// Run enters the native event loop and blocks until Quit.
 	Run() error
 	// Dispatch schedules f on the UI thread. Safe from any goroutine.
@@ -97,6 +119,14 @@ type WebView interface {
 	SetBounds(Rect)
 	SetVisible(bool)
 	Focus()
+	// SetInputRegions restricts where this webview receives pointer
+	// input, in physical pixels relative to the window's client area.
+	// Outside the regions the pointer falls through to whatever is
+	// underneath. nil restores the default (input everywhere); an empty
+	// non-nil slice makes the whole view click-through. The view keeps
+	// rendering everywhere regardless — regions gate input, not pixels.
+	// Best-effort: backends without overlay support ignore it.
+	SetInputRegions([]Rect)
 	// DeleteProfile marks this webview's browsing profile (cookies,
 	// storage) for removal from disk; it takes effect when the profile's
 	// webviews close. Best-effort — unsupported backends keep the data.

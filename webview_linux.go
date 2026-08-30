@@ -26,10 +26,14 @@ type webView struct {
 	view    uintptr // WebKitWebView*
 	ucm     uintptr // WebKitUserContentManager*
 	profile string
+	overlay bool
 	closed  bool
+
+	regions   []Rect // non-nil: input limited to these (see SetInputRegions)
+	canTarget bool
 }
 
-func newWebView(b *backend, w *window, profile string) (*webView, error) {
+func newWebView(b *backend, w *window, profile string, cfg webViewConfig) (*webView, error) {
 	sess := b.sessions.get(profile)
 	ucm := native.WebkitUserContentManagerNew()
 	view := native.ObjectNew(native.WebkitWebViewGetType(), []native.Prop{
@@ -37,11 +41,16 @@ func newWebView(b *backend, w *window, profile string) (*webView, error) {
 		{Name: "user-content-manager", Object: ucm},
 	})
 	native.GObjectRefSink(view)
-	v := &webView{backend: b, win: w, view: view, ucm: ucm, profile: profile}
+	v := &webView{backend: b, win: w, view: view, ucm: ucm, profile: profile,
+		overlay: cfg.overlay, canTarget: true}
 
 	// New webviews start visible: the platform contract.
 	native.GtkFixedPut(w.fixed, view, 0, 0)
 	native.GtkWidgetSetVisible(view, 1)
+	if v.overlay {
+		w.overlays = append(w.overlays, v)
+	}
+	w.restack()
 
 	// Bridge plumbing before anything can navigate: the message handler
 	// and the WebView2-compat polyfill (added first, so later
@@ -59,7 +68,11 @@ func newWebView(b *backend, w *window, profile string) (*webView, error) {
 		native.WebkitSettingsSetEnableDeveloperExtras(settings, 1)
 		native.WebkitSettingsSetEnableWriteConsoleMessagesToStdout(settings, 1)
 	}
-	if Dark() {
+	if v.overlay {
+		// The page paints only what it wants visible; everything else
+		// shows the views underneath.
+		native.WebkitWebViewSetBackgroundColor(view, &native.GdkRGBA{})
+	} else if Dark() {
 		native.WebkitWebViewSetBackgroundColor(view, &native.GdkRGBA{
 			R: 0x18 / 255.0, G: 0x18 / 255.0, B: 0x1b / 255.0, A: 1, // zinc-900
 		})
@@ -214,6 +227,43 @@ func (v *webView) Focus() {
 	native.GtkWidgetGrabFocus(v.view)
 }
 
+// SetInputRegions limits pointer input to regions (physical px, client
+// area coordinates). nil restores input everywhere; empty non-nil makes
+// the view fully click-through. Implemented by flipping can-target from
+// pointer tracking on the window — GTK4 has no per-region widget input.
+func (v *webView) SetInputRegions(regions []Rect) {
+	if v.closed {
+		return
+	}
+	if regions == nil {
+		if v.regions != nil {
+			v.regions = nil
+			v.win.regionViews = remove(v.win.regionViews, v)
+			v.setCanTarget(true)
+		}
+		return
+	}
+	if v.regions == nil {
+		v.win.regionViews = append(v.win.regionViews, v)
+	}
+	v.regions = append([]Rect(nil), regions...)
+	// Re-evaluate immediately: regions can change under a resting
+	// pointer (e.g. a modal opened from the keyboard).
+	v.win.retarget()
+}
+
+func (v *webView) setCanTarget(t bool) {
+	if v.canTarget == t {
+		return
+	}
+	v.canTarget = t
+	b := int32(0)
+	if t {
+		b = 1
+	}
+	native.GtkWidgetSetCanTarget(v.view, b)
+}
+
 // Best-effort no-ops on this backend.
 func (v *webView) SetMemoryTargetLow(bool) {}
 func (v *webView) Suspend()                {}
@@ -231,6 +281,7 @@ func (v *webView) Close() {
 		return
 	}
 	v.closed = true
+	v.win.dropView(v)
 	native.WebkitWebViewTryClose(v.view)
 	native.GtkFixedRemove(v.win.fixed, v.view)
 	native.GObjectUnref(v.view)

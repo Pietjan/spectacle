@@ -70,13 +70,20 @@ func (b *backend) NewWindow(title string, bounds Rect) (Window, error) {
 }
 
 // NewWebView creates a webview on w in the given profile.
-func (b *backend) NewWebView(pw Window, profile string) (WebView, error) {
+func (b *backend) NewWebView(pw Window, profile string, options ...WebViewOption) (WebView, error) {
 	w, ok := pw.(*window)
 	if !ok {
 		return nil, fmt.Errorf("linux: foreign window %T", pw)
 	}
-	return newWebView(b, w, profile)
+	var cfg webViewConfig
+	for _, opt := range options {
+		opt(&cfg)
+	}
+	return newWebView(b, w, profile, cfg)
 }
+
+// SupportsOverlay: GTK4 composites all views in one scene graph.
+func (b *backend) SupportsOverlay() bool { return true }
 
 // Run pumps the GLib main loop until Quit.
 func (b *backend) Run() error {
