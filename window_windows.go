@@ -4,6 +4,7 @@ package spectacle
 
 import (
 	"fmt"
+	"log"
 	"syscall"
 	"unsafe"
 
@@ -40,6 +41,10 @@ type window struct {
 	focused  *webView
 	tracking bool // TrackMouseEvent armed
 
+	// OLE drag-and-drop routing state.
+	dragData unsafe.Pointer // IDataObject*, held (AddRef'd) for the drag
+	dragView *webView       // view the drag is currently over
+
 	tray *tray
 }
 
@@ -61,7 +66,87 @@ func (w *window) ensureComposition(dev *webview2.CompositionDevice) error {
 		return err
 	}
 	w.target, w.root = target, root
+	// Composition hosting makes the host window the drop target; route
+	// OLE drags to the view under the cursor. Best-effort: without it,
+	// drops just do nothing.
+	if err := webview2.RegisterDropTarget(w.hwnd, w); err != nil {
+		log.Printf("win: drag-and-drop unavailable: %v", err)
+	}
 	return nil
+}
+
+// dropPoint converts an OLE screen coordinate to window client space.
+func (w *window) dropPoint(x, y int32) (int32, int32) {
+	pt := w32.Point{X: x, Y: y}
+	w32.ScreenToClient.Call(w.hwnd, uintptr(unsafe.Pointer(&pt)))
+	return pt.X, pt.Y
+}
+
+// dragTransition moves the drag between views mid-flight, pairing
+// DragLeave/DragEnter per controller the way WebView2 expects.
+func (w *window) dragTransition(v *webView, keyState uint32, cx, cy int32, effect *uint32) {
+	if v == w.dragView {
+		return
+	}
+	if w.dragView != nil {
+		w.dragView.comp.DragLeave()
+	}
+	w.dragView = v
+	if v != nil {
+		v.comp.DragEnter(w.dragData, keyState, cx-int32(v.bounds.X), cy-int32(v.bounds.Y), effect)
+	}
+}
+
+// DragEnter implements webview2.DropRouter.
+func (w *window) DragEnter(data unsafe.Pointer, keyState uint32, x, y int32, effect *uint32) {
+	w.dragData = data
+	webview2.AddRefObject(data)
+	cx, cy := w.dropPoint(x, y)
+	w.dragTransition(w.hitTest(cx, cy), keyState, cx, cy, effect)
+	if w.dragView == nil {
+		*effect = 0
+	}
+}
+
+// DragOver implements webview2.DropRouter.
+func (w *window) DragOver(keyState uint32, x, y int32, effect *uint32) {
+	cx, cy := w.dropPoint(x, y)
+	v := w.hitTest(cx, cy)
+	w.dragTransition(v, keyState, cx, cy, effect)
+	if v == nil {
+		*effect = 0
+		return
+	}
+	v.comp.DragOver(keyState, cx-int32(v.bounds.X), cy-int32(v.bounds.Y), effect)
+}
+
+// DragLeave implements webview2.DropRouter.
+func (w *window) DragLeave() {
+	if w.dragView != nil {
+		w.dragView.comp.DragLeave()
+		w.dragView = nil
+	}
+	if w.dragData != nil {
+		webview2.ReleaseObject(w.dragData)
+		w.dragData = nil
+	}
+}
+
+// Drop implements webview2.DropRouter.
+func (w *window) Drop(data unsafe.Pointer, keyState uint32, x, y int32, effect *uint32) {
+	cx, cy := w.dropPoint(x, y)
+	v := w.hitTest(cx, cy)
+	w.dragTransition(v, keyState, cx, cy, effect)
+	if v != nil {
+		v.comp.Drop(data, keyState, cx-int32(v.bounds.X), cy-int32(v.bounds.Y), effect)
+	} else {
+		*effect = 0
+	}
+	w.dragView = nil
+	if w.dragData != nil {
+		webview2.ReleaseObject(w.dragData)
+		w.dragData = nil
+	}
 }
 
 // attachView inserts v into the z-order and the visual tree: overlays
@@ -110,6 +195,9 @@ func (w *window) detachView(v *webView) {
 	}
 	if w.focused == v {
 		w.focused = nil
+	}
+	if w.dragView == v {
+		w.dragView = nil
 	}
 	if w.root != nil {
 		w.root.RemoveVisual(v.visual)
@@ -169,6 +257,7 @@ func (w *window) wndProc(msg, wparam uintptr, lparam unsafe.Pointer) uintptr {
 		w32.DestroyWindow.Call(w.hwnd)
 		return 0
 	case w32.WmDestroy:
+		w32.RevokeDragDrop.Call(w.hwnd)
 		delete(windows, w.hwnd)
 		w32.PostQuitMessage.Call(0)
 		return 0

@@ -58,6 +58,11 @@ func New(cfg Config) (Backend, error) {
 	if r, _, _ := w32.CoInitializeEx.Call(0, w32.CoinitApartmentThreaded); int32(r) < 0 {
 		return nil, fmt.Errorf("win: CoInitializeEx failed: 0x%08x", uint32(r))
 	}
+	// OLE proper (on top of the STA above) for RegisterDragDrop; without
+	// it drag-and-drop silently stays off. S_FALSE (already done) is fine.
+	if r, _, _ := w32.OleInitialize.Call(0); int32(r) < 0 {
+		log.Printf("win: OleInitialize failed: 0x%08x (drag-and-drop off)", uint32(r))
+	}
 	if err := ensureRuntime(); err != nil {
 		return nil, err
 	}

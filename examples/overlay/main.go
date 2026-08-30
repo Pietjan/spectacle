@@ -126,6 +126,11 @@ const contentHTML = `<!doctype html><html><head><style>
     addEventListener('click',e=>say('click '+e.clientX+','+e.clientY));
     addEventListener('keydown',e=>say('key '+e.key));
     addEventListener('wheel',e=>say('wheel '+e.deltaY));
+    let dragT=0;
+    addEventListener('dragover',e=>{e.preventDefault();
+      if(Date.now()-dragT>500){dragT=Date.now();say('dragover '+e.clientX+','+e.clientY);}});
+    addEventListener('drop',e=>{e.preventDefault();
+      say('drop '+[...e.dataTransfer.files].map(f=>f.name).join(',')+' at '+e.clientX+','+e.clientY);});
   </script>
 </body></html>`
 
