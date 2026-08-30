@@ -33,6 +33,7 @@ func run() error {
 		Name:    "Overlay Demo",
 		Comment: "spectacle overlay and input-region demo",
 		DataDir: filepath.Join(cache, "spectacle-overlay-demo"),
+		Debug:   os.Getenv("OVERLAY_DEMO_DEBUG") != "",
 	})
 	if err != nil {
 		return err
@@ -65,10 +66,12 @@ func run() error {
 		}
 	}
 	win.OnResize(func(cw, ch, cdpi int) {
+		log.Printf("resize %dx%d dpi=%d", cw, ch, cdpi)
 		w, h, dpi = cw, ch, cdpi
 		apply()
 	})
 	overlay.OnMessage(func(raw string) {
+		log.Printf("overlay message: %s", raw)
 		var msg struct {
 			Modal *bool `json:"modal"`
 		}
@@ -100,7 +103,13 @@ const contentHTML = `<!doctype html><html><head><style>
   <div id="pos">hover shows coordinates here</div>
   <script>
     let n=0;
-    addEventListener('mousemove',e=>pos.textContent=e.clientX+', '+e.clientY);
+    addEventListener('mousemove',e=>{
+      pos.textContent=e.clientX+', '+e.clientY;
+      if (!window.__t || Date.now()-window.__t > 500) {
+        window.__t=Date.now(); console.log('content: move '+e.clientX+','+e.clientY+' win '+innerWidth+'x'+innerHeight);
+      }
+    });
+    addEventListener('click',e=>console.log('content: click '+e.clientX+','+e.clientY));
   </script>
 </body></html>`
 
@@ -141,7 +150,22 @@ const overlayHTML = `<!doctype html><html><head><style>
   <script>
     function setModal(open){
       backdrop.classList.toggle('open', open);
-      window.chrome.webview.postMessage({modal: open});
+      try {
+        window.chrome.webview.postMessage({modal: open});
+        console.log('overlay: posted modal='+open);
+      } catch (e) {
+        console.log('overlay: postMessage FAILED: '+e);
+      }
     }
+    for (const el of document.querySelectorAll('.item')) {
+      el.addEventListener('mouseenter',()=>console.log('overlay: enter '+el.textContent.trim()));
+      el.addEventListener('mouseleave',()=>console.log('overlay: leave '+el.textContent.trim()));
+    }
+    addEventListener('mousemove',e=>{
+      if (!window.__t || Date.now()-window.__t > 500) {
+        window.__t=Date.now(); console.log('overlay: move '+e.clientX+','+e.clientY);
+      }
+    });
+    addEventListener('click',e=>console.log('overlay: click '+e.clientX+','+e.clientY+' on '+(e.target.id||e.target.className||e.target.tagName)));
   </script>
 </body></html>`

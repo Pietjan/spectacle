@@ -4,6 +4,7 @@ package spectacle
 
 import (
 	_ "embed"
+	"log"
 
 	"github.com/pietjan/spectacle/internal/native"
 )
@@ -257,6 +258,9 @@ func (v *webView) setCanTarget(t bool) {
 		return
 	}
 	v.canTarget = t
+	if v.backend.debug {
+		log.Printf("linux: can-target %p -> %v (ptr %.0f,%.0f)", v, t, v.win.ptrX, v.win.ptrY)
+	}
 	b := int32(0)
 	if t {
 		b = 1
