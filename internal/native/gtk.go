@@ -33,6 +33,10 @@ var (
 	GtkHeaderBarNew      func() uintptr
 	GtkWindowSetTitlebar func(win, titlebar uintptr)
 
+	GtkScrolledWindowNew       func() uintptr
+	GtkScrolledWindowSetChild  func(sw, child uintptr)
+	GtkScrolledWindowSetPolicy func(sw uintptr, h, v int32)
+
 	GtkFixedNew    func() uintptr
 	GtkFixedPut    func(fixed, child uintptr, x, y float64)
 	GtkFixedMove   func(fixed, child uintptr, x, y float64)
@@ -85,6 +89,9 @@ var gtkFuncs = []registration{
 	{&GdkEventGetPosition, "gdk_event_get_position"},
 	{&GtkHeaderBarNew, "gtk_header_bar_new"},
 	{&GtkWindowSetTitlebar, "gtk_window_set_titlebar"},
+	{&GtkScrolledWindowNew, "gtk_scrolled_window_new"},
+	{&GtkScrolledWindowSetChild, "gtk_scrolled_window_set_child"},
+	{&GtkScrolledWindowSetPolicy, "gtk_scrolled_window_set_policy"},
 	{&GtkFixedNew, "gtk_fixed_new"},
 	{&GtkFixedPut, "gtk_fixed_put"},
 	{&GtkFixedMove, "gtk_fixed_move"},
@@ -104,3 +111,6 @@ const StyleProviderPriorityApplication = 600
 // GTK_PHASE_CAPTURE: event controllers run root-to-target, before the
 // target's own handlers.
 const PhaseCapture = 1
+
+// GTK_POLICY_EXTERNAL: no scrollbars, scrolling managed by the caller.
+const PolicyExternal = 3

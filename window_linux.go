@@ -10,6 +10,7 @@ import (
 type window struct {
 	backend *backend
 	win     uintptr // GtkWindow*
+	clip    uintptr // GtkScrolledWindow* wrapping fixed
 	fixed   uintptr // GtkFixed*
 
 	onResize func(w, h, dpi int)
@@ -42,8 +43,17 @@ func newWindow(b *backend, title string, bounds Rect) (*window, error) {
 	}
 	// A client-side header bar, so the theme CSS owns the titlebar too.
 	native.GtkWindowSetTitlebar(w.win, native.GtkHeaderBarNew())
+	// Webview sizes are driven by size requests, which double as
+	// minimums — hosting the fixed directly would stop the window from
+	// ever shrinking (the minimum ratchets up to the current size). A
+	// scrolled window with external policy absorbs the child minimum
+	// (no scrollbars, nothing actually scrolls); the app re-lays views
+	// out to the new size on every resize anyway.
 	w.fixed = native.GtkFixedNew()
-	native.GtkWindowSetChild(w.win, w.fixed)
+	w.clip = native.GtkScrolledWindowNew()
+	native.GtkScrolledWindowSetPolicy(w.clip, native.PolicyExternal, native.PolicyExternal)
+	native.GtkScrolledWindowSetChild(w.clip, w.fixed)
+	native.GtkWindowSetChild(w.win, w.clip)
 
 	native.Connect(w.win, "close-request", 0, func([]uintptr) uintptr {
 		if w.onClose != nil && !w.onClose() {
@@ -177,8 +187,8 @@ func (w *window) checkResize() {
 	if scale < 1 {
 		scale = 1
 	}
-	cw := int(native.GtkWidgetGetWidth(w.fixed)) * scale
-	ch := int(native.GtkWidgetGetHeight(w.fixed)) * scale
+	cw := int(native.GtkWidgetGetWidth(w.clip)) * scale
+	ch := int(native.GtkWidgetGetHeight(w.clip)) * scale
 	if cw == 0 || ch == 0 {
 		// Not yet allocated: report the requested size so the app can
 		// lay out before the first frame.

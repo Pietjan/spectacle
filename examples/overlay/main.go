@@ -73,9 +73,17 @@ func run() error {
 	overlay.OnMessage(func(raw string) {
 		log.Printf("overlay message: %s", raw)
 		var msg struct {
-			Modal *bool `json:"modal"`
+			Modal  *bool `json:"modal"`
+			Resize []int `json:"resize"`
 		}
-		if json.Unmarshal([]byte(raw), &msg) != nil || msg.Modal == nil {
+		if json.Unmarshal([]byte(raw), &msg) != nil {
+			return
+		}
+		if len(msg.Resize) == 2 {
+			win.SetBounds(spectacle.Rect{W: msg.Resize[0], H: msg.Resize[1]})
+			return
+		}
+		if msg.Modal == nil {
 			return
 		}
 		modal = *msg.Modal
@@ -136,7 +144,7 @@ const overlayHTML = `<!doctype html><html><head><style>
 </style></head><body>
   <div id="rail">
     <div class="item">💬<span class="tip">A tooltip overhanging the rail</span></div>
-    <div class="item">📧<span class="tip">Another one, longer, to be sure</span></div>
+    <div class="item" onclick="window.chrome.webview.postMessage({resize:[innerWidth>700?[600,400]:[900,600]][0]})">📧<span class="tip">Toggle window size</span></div>
     <div class="item" onclick="setModal(true)">⚙️<span class="tip">Open the modal</span></div>
   </div>
   <div id="backdrop" onclick="if(event.target===this)setModal(false)">
