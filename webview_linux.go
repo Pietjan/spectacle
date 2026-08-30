@@ -248,6 +248,9 @@ func (v *webView) SetInputRegions(regions []Rect) {
 		v.win.regionViews = append(v.win.regionViews, v)
 	}
 	v.regions = append([]Rect(nil), regions...)
+	if v.backend.debug {
+		log.Printf("linux: input regions %p = %v", v, v.regions)
+	}
 	// Re-evaluate immediately: regions can change under a resting
 	// pointer (e.g. a modal opened from the keyboard).
 	v.win.retarget()

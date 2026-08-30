@@ -167,5 +167,10 @@ const overlayHTML = `<!doctype html><html><head><style>
       }
     });
     addEventListener('click',e=>console.log('overlay: click '+e.clientX+','+e.clientY+' on '+(e.target.id||e.target.className||e.target.tagName)));
+    let hovered=-1;
+    setInterval(()=>{
+      const n=document.querySelectorAll('.item:hover').length;
+      if(n!==hovered){hovered=n;console.log('overlay: hoverCount '+n);}
+    },250);
   </script>
 </body></html>`

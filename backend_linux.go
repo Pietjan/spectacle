@@ -7,7 +7,6 @@ package spectacle
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"sync"
 
@@ -33,13 +32,11 @@ func New(cfg Config) (Backend, error) {
 		return nil, err
 	}
 	conf = cfg
-	// WebKitGTK's dmabuf renderer produces blank views under WSLg;
-	// disable it there (overridable) so the dev loop works.
-	if _, err := os.Stat("/mnt/wslg"); err == nil {
-		if os.Getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == "" {
-			os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
-		}
-	}
+	// No WSLg dmabuf workaround anymore: current WSLg renders dmabuf
+	// fine, and the SHM fallback it forced never repaints transparent
+	// overlay views until a full redraw (tooltips/modals linger). If
+	// views come up blank on an old WSLg, run `wsl --update` or set
+	// WEBKIT_DISABLE_DMABUF_RENDERER=1 (and skip overlays).
 	if err := native.Load(); err != nil {
 		return nil, err
 	}
