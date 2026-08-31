@@ -47,6 +47,8 @@ var (
 
 	GtkEventControllerLegacyNew           func() uintptr
 	GtkEventControllerSetPropagationPhase func(controller uintptr, phase int32)
+	GtkEventControllerScrollGetType       func() uintptr
+	GtkWidgetObserveControllers           func(widget uintptr) uintptr
 	GdkEventGetPosition                   func(event uintptr, x, y *float64) int32
 
 	GtkSettingsGetDefault func() uintptr
@@ -86,6 +88,8 @@ var gtkFuncs = []registration{
 	{&GtkNativeGetSurfaceTransform, "gtk_native_get_surface_transform"},
 	{&GtkEventControllerLegacyNew, "gtk_event_controller_legacy_new"},
 	{&GtkEventControllerSetPropagationPhase, "gtk_event_controller_set_propagation_phase"},
+	{&GtkEventControllerScrollGetType, "gtk_event_controller_scroll_get_type"},
+	{&GtkWidgetObserveControllers, "gtk_widget_observe_controllers"},
 	{&GdkEventGetPosition, "gdk_event_get_position"},
 	{&GtkHeaderBarNew, "gtk_header_bar_new"},
 	{&GtkWindowSetTitlebar, "gtk_window_set_titlebar"},
@@ -107,6 +111,9 @@ var gtkFuncs = []registration{
 
 // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION.
 const StyleProviderPriorityApplication = 600
+
+// GTK_PHASE_NONE: the controller receives no events at all.
+const PhaseNone = 0
 
 // GTK_PHASE_CAPTURE: event controllers run root-to-target, before the
 // target's own handlers.

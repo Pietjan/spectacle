@@ -8,6 +8,9 @@ var (
 	gSettingsSchemaUnref            func(schema uintptr)
 	gSettingsNew                    func(schemaID string) uintptr
 	gSettingsGetString              func(settings uintptr, key string) *byte
+
+	GListModelGetNItems func(model uintptr) uint32
+	GListModelGetItem   func(model uintptr, position uint32) uintptr // transfer full
 )
 
 var gioFuncs = []registration{
@@ -16,6 +19,8 @@ var gioFuncs = []registration{
 	{&gSettingsSchemaUnref, "g_settings_schema_unref"},
 	{&gSettingsNew, "g_settings_new"},
 	{&gSettingsGetString, "g_settings_get_string"},
+	{&GListModelGetNItems, "g_list_model_get_n_items"},
+	{&GListModelGetItem, "g_list_model_get_item"},
 }
 
 // SettingsString reads a string key from a GSettings schema, or ""

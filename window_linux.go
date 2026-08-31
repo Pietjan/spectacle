@@ -54,6 +54,21 @@ func newWindow(b *backend, title string, bounds Rect) (*window, error) {
 	native.GtkScrolledWindowSetPolicy(w.clip, native.PolicyExternal, native.PolicyExternal)
 	native.GtkScrolledWindowSetChild(w.clip, w.fixed)
 	native.GtkWindowSetChild(w.win, w.clip)
+	// External policy makes the scrolled window report itself scrollable
+	// (may_h/vscroll are unconditionally true for GTK_POLICY_EXTERNAL),
+	// so its built-in scroll controllers swallow wheel events that the
+	// webviews underneath should get. The clip exists only to absorb size
+	// requests — detach its scroll controllers entirely.
+	controllers := native.GtkWidgetObserveControllers(w.clip)
+	scrollType := native.GtkEventControllerScrollGetType()
+	for i := native.GListModelGetNItems(controllers); i > 0; i-- {
+		c := native.GListModelGetItem(controllers, i-1)
+		if native.GTypeCheckInstanceIsA(c, scrollType) != 0 {
+			native.GtkEventControllerSetPropagationPhase(c, native.PhaseNone)
+		}
+		native.GObjectUnref(c)
+	}
+	native.GObjectUnref(controllers)
 
 	native.Connect(w.win, "close-request", 0, func([]uintptr) uintptr {
 		if w.onClose != nil && !w.onClose() {
