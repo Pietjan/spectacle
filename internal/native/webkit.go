@@ -11,6 +11,8 @@ var (
 	WebkitWebViewGetType                       func() uintptr
 	WebkitNetworkSessionNew                    func(dataDir, cacheDir string) uintptr
 	WebkitNetworkSessionGetWebsiteDataManager  func(session uintptr) uintptr
+	WebkitNetworkSessionGetCookieManager       func(session uintptr) uintptr
+	WebkitCookieManagerSetPersistentStorage    func(cm uintptr, filename string, storage int32)
 	WebkitWebsiteDataManagerSetFaviconsEnabled func(dm uintptr, enabled int32)
 	WebkitUserContentManagerNew                func() uintptr
 
@@ -45,6 +47,8 @@ var webkitFuncs = []registration{
 	{&WebkitWebViewGetType, "webkit_web_view_get_type"},
 	{&WebkitNetworkSessionNew, "webkit_network_session_new"},
 	{&WebkitNetworkSessionGetWebsiteDataManager, "webkit_network_session_get_website_data_manager"},
+	{&WebkitNetworkSessionGetCookieManager, "webkit_network_session_get_cookie_manager"},
+	{&WebkitCookieManagerSetPersistentStorage, "webkit_cookie_manager_set_persistent_storage"},
 	{&WebkitWebsiteDataManagerSetFaviconsEnabled, "webkit_website_data_manager_set_favicons_enabled"},
 	{&WebkitUserContentManagerNew, "webkit_user_content_manager_new"},
 	{&WebkitUserContentManagerAddScript, "webkit_user_content_manager_add_script"},
@@ -74,4 +78,9 @@ var webkitFuncs = []registration{
 const (
 	UserContentInjectAllFrames      = 0
 	UserScriptInjectAtDocumentStart = 0
+)
+
+// webkit_cookie_manager_set_persistent_storage enums.
+const (
+	CookiePersistentStorageSQLite = 1
 )

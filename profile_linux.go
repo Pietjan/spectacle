@@ -40,6 +40,12 @@ func (m *sessionManager) get(profile string) *session {
 			cacheDir: filepath.Join(m.dataDir, "profiles", name, "cache"),
 		}
 		s.handle = native.WebkitNetworkSessionNew(s.dataDir, s.cacheDir)
+		// A persistent session still keeps cookies in memory only; WebKit
+		// requires an explicit opt-in for on-disk cookie storage.
+		cm := native.WebkitNetworkSessionGetCookieManager(s.handle)
+		native.WebkitCookieManagerSetPersistentStorage(cm,
+			filepath.Join(s.dataDir, "cookies.sqlite"),
+			native.CookiePersistentStorageSQLite)
 		// Favicons never fire without opting in on the data manager.
 		dm := native.WebkitNetworkSessionGetWebsiteDataManager(s.handle)
 		native.WebkitWebsiteDataManagerSetFaviconsEnabled(dm, 1)
