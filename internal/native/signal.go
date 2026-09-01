@@ -94,6 +94,22 @@ func Connect(instance uintptr, signal string, extraArgs int, fn func(args []uint
 	GSignalConnectData(instance, signal, tramp, register(fn), destroyTramp, 0)
 }
 
+// AsyncReady packages fn as a one-shot GAsyncReadyCallback: pass the
+// returned pair to any *_async function's callback/user_data slots. fn
+// receives (source_object, GAsyncResult*). Async callbacks have no
+// GDestroyNotify slot, so the registry entry frees itself on fire.
+func AsyncReady(fn func(source, result uintptr)) (callback, userData uintptr) {
+	var key uintptr
+	key = register(func(args []uintptr) uintptr {
+		registry.Lock()
+		delete(registry.m, key)
+		registry.Unlock()
+		fn(args[0], args[1])
+		return 0
+	})
+	return tramp1, key
+}
+
 // ScheduleIdle runs fn once on the GLib main loop at the given priority.
 // Thread-safe: g_idle_add_full wakes the main context itself. This is
 // the backend's Dispatch primitive.

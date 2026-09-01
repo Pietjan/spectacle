@@ -4,6 +4,7 @@ package spectacle
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"log"
 
 	"github.com/pietjan/spectacle/internal/native"
@@ -57,6 +58,14 @@ func newWebView(b *backend, w *window, profile string, cfg webViewConfig) (*webV
 	// and the WebView2-compat polyfill (added first, so later
 	// InitScripts can rely on window.chrome.webview existing).
 	native.WebkitUserContentManagerRegisterScriptMessageHandler(ucm, "spectacle", 0)
+	// Clipboard-image bridge: WebKitGTK delivers paste events with empty
+	// clipboardData for images, so the polyfill asks us to read the
+	// clipboard natively and replays the paste (see polyfill.js).
+	native.WebkitUserContentManagerRegisterScriptMessageHandler(ucm, "spectacleClip", 0)
+	native.Connect(ucm, "script-message-received::spectacleClip", 1, func(args []uintptr) uintptr {
+		v.serveClipboardImage(native.JSCValueString(args[1]))
+		return 0
+	})
 	v.addUserScript(polyfill)
 
 	settings := native.WebkitWebViewGetSettings(view)
@@ -88,6 +97,51 @@ func newWebView(b *backend, w *window, profile string, cfg webViewConfig) (*webV
 		return 0
 	})
 	return v, nil
+}
+
+// serveClipboardImage answers the polyfill's paste request: read the
+// clipboard as a texture (GDK decodes any pixbuf format, including the
+// image/bmp WSLg bridges from Windows copies), re-encode as PNG, and
+// deliver it base64'd to the page. Requests are only honored while
+// focus is inside this view — a paste can't happen anywhere else, and
+// it keeps unfocused pages from silently reading the clipboard.
+func (v *webView) serveClipboardImage(id string) {
+	for _, c := range id {
+		if c < '0' || c > '9' {
+			return // id is inlined into JS below; digits only
+		}
+	}
+	if id == "" || v.closed {
+		return
+	}
+	deliver := func(b64 string) {
+		if v.closed {
+			return
+		}
+		script := "window.__spectaclePaste?.(" + id + ",\"" + b64 + "\")"
+		native.WebkitWebViewEvaluateJavascript(v.view, script, -1, 0, 0, 0, 0, 0)
+	}
+	const focused = native.StateFlagFocused | native.StateFlagFocusWithin
+	if native.GtkWidgetGetStateFlags(v.view)&focused == 0 {
+		deliver("")
+		return
+	}
+	clipboard := native.GdkDisplayGetClipboard(native.GdkDisplayGetDefault())
+	native.GdkClipboardReadTexture(clipboard, func(texture uintptr) {
+		if texture == 0 {
+			deliver("")
+			return
+		}
+		defer native.GObjectUnref(texture)
+		bytes := native.GdkTextureSaveToPngBytes(texture)
+		if bytes == 0 {
+			deliver("")
+			return
+		}
+		png := native.BytesCopy(bytes)
+		native.GBytesUnref(bytes)
+		deliver(base64.StdEncoding.EncodeToString(png))
+	})
 }
 
 func (v *webView) addUserScript(js string) {

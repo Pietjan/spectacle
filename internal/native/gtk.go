@@ -59,6 +59,11 @@ var (
 	GdkDisplayGetDefault                 func() uintptr
 
 	GdkTextureSaveToPngBytes func(texture uintptr) uintptr
+
+	GtkWidgetGetStateFlags        func(w uintptr) uint32
+	GdkDisplayGetClipboard        func(display uintptr) uintptr
+	gdkClipboardReadTextureAsync  func(clipboard, cancellable, callback, userData uintptr)
+	gdkClipboardReadTextureFinish func(clipboard, result, gerror uintptr) uintptr
 )
 
 var gtkFuncs = []registration{
@@ -107,6 +112,21 @@ var gtkFuncs = []registration{
 	{&GtkStyleContextAddProviderForDisplay, "gtk_style_context_add_provider_for_display"},
 	{&GdkDisplayGetDefault, "gdk_display_get_default"},
 	{&GdkTextureSaveToPngBytes, "gdk_texture_save_to_png_bytes"},
+	{&GtkWidgetGetStateFlags, "gtk_widget_get_state_flags"},
+	{&GdkDisplayGetClipboard, "gdk_display_get_clipboard"},
+	{&gdkClipboardReadTextureAsync, "gdk_clipboard_read_texture_async"},
+	{&gdkClipboardReadTextureFinish, "gdk_clipboard_read_texture_finish"},
+}
+
+// GdkClipboardReadTexture reads the clipboard's image content, decoded
+// through GDK's content deserializers (any pixbuf format, image/bmp
+// included). done receives a GdkTexture the caller must unref, or 0
+// when the clipboard holds no readable image.
+func GdkClipboardReadTexture(clipboard uintptr, done func(texture uintptr)) {
+	callback, userData := AsyncReady(func(source, result uintptr) {
+		done(gdkClipboardReadTextureFinish(source, result, 0))
+	})
+	gdkClipboardReadTextureAsync(clipboard, 0, callback, userData)
 }
 
 // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION.
@@ -121,3 +141,10 @@ const PhaseCapture = 1
 
 // GTK_POLICY_EXTERNAL: no scrollbars, scrolling managed by the caller.
 const PolicyExternal = 3
+
+// GtkStateFlags bits: the widget itself has keyboard focus, or focus is
+// somewhere inside it (WebKit keeps it on an internal child).
+const (
+	StateFlagFocused     = 1 << 5
+	StateFlagFocusWithin = 1 << 13
+)
