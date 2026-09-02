@@ -77,7 +77,11 @@ func newWindow(b *backend, title string, bounds Rect) (*window, error) {
 		return 0
 	})
 	native.Connect(w.win, "destroy", 0, func([]uintptr) uintptr {
-		b.Quit()
+		// Only the main window ends the app; secondary windows (popups,
+		// sessions) come and go while it lives.
+		if w == b.main {
+			b.Quit()
+		}
 		return 0
 	})
 	// Size tracking: GTK4 has no size-allocate signal. GdkSurface::layout

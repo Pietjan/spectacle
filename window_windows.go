@@ -5,6 +5,7 @@ package spectacle
 import (
 	"fmt"
 	"log"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -259,7 +260,11 @@ func (w *window) wndProc(msg, wparam uintptr, lparam unsafe.Pointer) uintptr {
 	case w32.WmDestroy:
 		w32.RevokeDragDrop.Call(w.hwnd)
 		delete(windows, w.hwnd)
-		w32.PostQuitMessage.Call(0)
+		// Only the main window ends the app; secondary windows (popups,
+		// sessions) come and go while it lives.
+		if w == w.backend.main {
+			w32.PostQuitMessage.Call(0)
+		}
 		return 0
 	case wmAppDispatch:
 		w.backend.drainDispatch()
@@ -406,6 +411,13 @@ func (w *window) notifyResize() {
 	w.onResize(int(rect.Right-rect.Left), int(rect.Bottom-rect.Top), int(dpi))
 }
 
+// classOnce registers the shared window class on first use; classErr keeps
+// a failure so later windows report it too.
+var (
+	classOnce sync.Once
+	classErr  error
+)
+
 func newWindow(b *backend, title string, bounds Rect) (*window, error) {
 	hinstance, _, _ := w32.GetModuleHandle.Call(0)
 	cursor, _, _ := w32.LoadCursor.Call(0, uintptr(w32.IdcArrow))
@@ -419,18 +431,25 @@ func newWindow(b *backend, title string, bounds Rect) (*window, error) {
 			background = brush
 		}
 	}
-	cls := w32.WndClassEx{
-		Style:         0,
-		LpfnWndProc:   wndProcCallback,
-		HInstance:     hinstance,
-		HIcon:         icon,
-		HCursor:       cursor,
-		HbrBackground: background,
-		LpszClassName: utf16Ptr(className()),
-	}
-	cls.CbSize = uint32(unsafe.Sizeof(cls))
-	if atom, _, err := w32.RegisterClassEx.Call(uintptr(unsafe.Pointer(&cls))); atom == 0 {
-		return nil, fmt.Errorf("win: RegisterClassEx: %w", err)
+	// One window class serves every window of the process; Windows refuses
+	// to register it twice, so the second window would otherwise fail.
+	classOnce.Do(func() {
+		cls := w32.WndClassEx{
+			Style:         0,
+			LpfnWndProc:   wndProcCallback,
+			HInstance:     hinstance,
+			HIcon:         icon,
+			HCursor:       cursor,
+			HbrBackground: background,
+			LpszClassName: utf16Ptr(className()),
+		}
+		cls.CbSize = uint32(unsafe.Sizeof(cls))
+		if atom, _, err := w32.RegisterClassEx.Call(uintptr(unsafe.Pointer(&cls))); atom == 0 {
+			classErr = fmt.Errorf("win: RegisterClassEx: %w", err)
+		}
+	})
+	if classErr != nil {
+		return nil, classErr
 	}
 
 	w := &window{backend: b}
