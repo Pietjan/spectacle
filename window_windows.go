@@ -558,6 +558,9 @@ func (w *window) OnResize(fn func(width, height, dpi int)) {
 // OnCloseRequest registers the close-veto callback.
 func (w *window) OnCloseRequest(fn func() bool) { w.onClose = fn }
 
+// Close posts WM_CLOSE, so OnCloseRequest runs as for a user close.
+func (w *window) Close() { w32.PostMessage.Call(w.hwnd, w32.WmClose, 0, 0) }
+
 // Tray returns (creating on first use) the notification-area icon.
 func (w *window) Tray() Tray {
 	if w.tray == nil {

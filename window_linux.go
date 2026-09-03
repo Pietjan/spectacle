@@ -256,6 +256,10 @@ func (w *window) OnResize(fn func(width, height, dpi int)) {
 // OnCloseRequest registers the close-veto callback.
 func (w *window) OnCloseRequest(fn func() bool) { w.onClose = fn }
 
+// Close asks GTK to close the window, which emits close-request so
+// OnCloseRequest runs as for a user close.
+func (w *window) Close() { native.GtkWindowClose(w.win) }
+
 // Tray returns (creating on first use) the status notifier item.
 func (w *window) Tray() Tray {
 	if w.tray == nil {

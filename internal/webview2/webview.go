@@ -287,6 +287,17 @@ func (w *CoreWebView2) OnNewWindowRequested(fn func(uri string) bool) error {
 	return checkHR("add_NewWindowRequested", hr)
 }
 
+// OnWindowCloseRequested fires when the page calls window.close().
+func (w *CoreWebView2) OnWindowCloseRequested(fn func()) error {
+	h := newHandler(func(sender, args unsafe.Pointer) uintptr {
+		fn()
+		return 0
+	})
+	var token int64
+	hr := call(w.vtbl.AddWindowCloseRequested, unsafe.Pointer(w), h.ptr(), uintptr(unsafe.Pointer(&token)))
+	return checkHR("add_WindowCloseRequested", hr)
+}
+
 // AutoGrantNotifications answers notification permission prompts with
 // ALLOW; other kinds keep the default behaviour.
 func (w *CoreWebView2) AutoGrantNotifications() error {

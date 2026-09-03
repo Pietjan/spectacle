@@ -136,6 +136,12 @@ func (v *webView) OnFaviconChanged(fn func(png []byte)) {
 	}
 }
 
+func (v *webView) OnClose(fn func()) {
+	if err := v.core.OnWindowCloseRequested(fn); err != nil {
+		log.Printf("win: %v", err)
+	}
+}
+
 func (v *webView) OnNewWindow(fn func(url string) bool) {
 	if err := v.core.OnNewWindowRequested(fn); err != nil {
 		log.Printf("win: %v", err)

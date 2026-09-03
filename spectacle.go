@@ -80,6 +80,9 @@ type Window interface {
 	// OnCloseRequest is consulted when the user asks to close the window.
 	// Returning false vetoes the close (the app may hide to tray instead).
 	OnCloseRequest(func() bool)
+	// Close asks the window to close, exactly as the user would: the
+	// OnCloseRequest handler is consulted and may veto.
+	Close()
 	Tray() Tray
 }
 
@@ -104,6 +107,10 @@ type WebView interface {
 	// lets the backend open its default popup window. fn must decide
 	// synchronously.
 	OnNewWindow(func(url string) bool)
+	// OnClose fires when the page asks for its window to go away
+	// (window.close()). The app decides what that means; nothing closes
+	// by itself.
+	OnClose(func())
 	// OnNotification subscribes to web notifications raised by the page —
 	// service workers included — and reports whether the backend supports
 	// that. When it returns false, the caller must provide its own

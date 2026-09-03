@@ -225,6 +225,13 @@ func (v *webView) OnNotification(fn func(title, body string)) bool {
 	return true
 }
 
+func (v *webView) OnClose(fn func()) {
+	native.Connect(v.view, "close", 0, func([]uintptr) uintptr {
+		fn()
+		return 0
+	})
+}
+
 func (v *webView) OnNewWindow(fn func(url string) bool) {
 	native.Connect(v.view, "create", 1, func(args []uintptr) uintptr {
 		req := native.WebkitNavigationActionGetRequest(args[1])
